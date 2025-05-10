@@ -10,44 +10,9 @@ router = APIRouter(
     tags=["Bookings"]
 )
 
-# ✅ Utility Function: Get IST Time (Directly Adding 5:30 Hours)
+# ✅ Utility Function: Get IST Time (Display Only)
 def get_ist_time():
     return datetime.utcnow() + timedelta(hours=5, minutes=30)
-
-# ✅ User - Book a Cabin
-@router.post("/")
-def book_cabin(booking: schemas.BookingCreate, db: Session = Depends(database.get_db), current_user: models.User = Depends(get_current_user)):
-    # Check if cabin exists
-    cabin = db.query(models.Cabin).filter(models.Cabin.id == booking.cabin_id).first()
-    if not cabin:
-        raise HTTPException(status_code=404, detail="Cabin not found")
-
-    # Restrict to 7 days (Using IST)
-    if booking.slot_time.date() > (get_ist_time() + timedelta(days=7)).date():
-        raise HTTPException(status_code=400, detail="You can only book for the next 7 days")
-
-    # Check existing bookings for the same time slot
-    overlapping_bookings = db.query(models.Booking).filter(
-        models.Booking.cabin_id == booking.cabin_id,
-        models.Booking.slot_time == booking.slot_time,
-        models.Booking.status == "Active"
-    ).count()
-
-    if overlapping_bookings >= cabin.max_bookings_per_day:
-        raise HTTPException(status_code=403, detail="This cabin is fully booked for the selected slot")
-
-    # Create the booking
-    new_booking = models.Booking(
-        user_id=current_user.id,
-        cabin_id=booking.cabin_id,
-        slot_time=booking.slot_time,
-        duration=booking.duration,
-        status="Active"
-    )
-    db.add(new_booking)
-    db.commit()
-    db.refresh(new_booking)
-    return new_booking
 
 # ✅ List Available Slots for a Cabin (Today and Tomorrow - Only Future Slots)
 @router.get("/{cabin_id}/available-slots")
@@ -56,18 +21,18 @@ def list_available_slots(cabin_id: int, db: Session = Depends(database.get_db)):
     if not cabin:
         raise HTTPException(status_code=404, detail="Cabin not found")
 
-    # Get all active bookings for this cabin
+    # Get all active bookings for this cabin (UTC)
     active_bookings = db.query(models.Booking).filter(
         models.Booking.cabin_id == cabin_id,
         models.Booking.status == "Active"
     ).all()
 
-    # List of booked slots (datetime strings)
+    # List of booked slots (datetime strings in UTC)
     booked_slots = [booking.slot_time.strftime("%Y-%m-%d %H:%M") for booking in active_bookings]
 
-    # Calculate all possible slots for today and tomorrow
+    # Calculate all possible slots for today and tomorrow (IST for Display)
     available_slots = {}
-    now = get_ist_time()  # Use IST directly
+    now = get_ist_time()  # Current IST time (for display)
     for day_offset in range(2):  # For today and tomorrow
         day = (now + timedelta(days=day_offset)).date()
         current_time = datetime.combine(day, cabin.start_time)
@@ -77,7 +42,7 @@ def list_available_slots(cabin_id: int, db: Session = Depends(database.get_db)):
         while current_time < end_time:
             slot_str = current_time.strftime("%Y-%m-%d %H:%M")
 
-            # Determine if the slot is booked or in the past
+            # Determine if the slot is booked (in UTC)
             if slot_str in booked_slots:
                 daily_slots.append(f"{slot_str} (Booked)")
             elif current_time < now:
@@ -95,8 +60,7 @@ def list_available_slots(cabin_id: int, db: Session = Depends(database.get_db)):
         "booked_slots": booked_slots  # Separate list for booked slots
     }
 
-
-# ✅ Book a Selected Available Slot (Today and Tomorrow Only)
+# ✅ Book a Selected Available Slot (in UTC)
 @router.post("/{cabin_id}/book-selected-slot")
 def book_selected_slot(
     cabin_id: int, 
@@ -114,9 +78,9 @@ def book_selected_slot(
     if not cabin:
         raise HTTPException(status_code=404, detail="Cabin not found")
 
-    # Convert selected_slot to datetime object (IST)
+    # Convert selected_slot to UTC (remove IST handling)
     try:
-        slot_time = datetime.strptime(selected_slot, "%Y-%m-%d %H:%M") + timedelta(hours=5, minutes=30)
+        slot_time = datetime.strptime(selected_slot, "%Y-%m-%d %H:%M")  # This is in UTC
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid slot time format. Use 'YYYY-MM-DD HH:MM'")
 
@@ -134,7 +98,7 @@ def book_selected_slot(
     new_booking = models.Booking(
         user_id=current_user.id,
         cabin_id=cabin_id,
-        slot_time=slot_time,
+        slot_time=slot_time,  # Storing in UTC
         duration=cabin.slot_duration,
         status="Active"
     )
@@ -151,11 +115,11 @@ def book_selected_slot(
         }
     }
 
-
-
 # ✅ List User Bookings (Active and Past with Cabin Names)
 @router.get("/my-bookings")
 def list_user_bookings(db: Session = Depends(database.get_db), current_user: models.User = Depends(get_current_user)):
+    now = get_ist_time()  # Current IST time
+
     active_bookings = db.query(
         models.Booking.id,
         models.Booking.cabin_id,
@@ -167,7 +131,7 @@ def list_user_bookings(db: Session = Depends(database.get_db), current_user: mod
     ).join(models.Cabin, models.Booking.cabin_id == models.Cabin.id).filter(
         models.Booking.user_id == current_user.id,
         models.Booking.status == "Active",
-        models.Booking.slot_time >= datetime.now()
+        models.Booking.slot_time >= now
     ).all()
 
     past_bookings = db.query(
@@ -180,7 +144,7 @@ def list_user_bookings(db: Session = Depends(database.get_db), current_user: mod
         models.Cabin.name.label("cabin_name")
     ).join(models.Cabin, models.Booking.cabin_id == models.Cabin.id).filter(
         models.Booking.user_id == current_user.id,
-        models.Booking.slot_time < datetime.now()
+        models.Booking.slot_time < now
     ).all()
 
     # Formatting the response to include cabin_name
@@ -203,6 +167,7 @@ def list_user_bookings(db: Session = Depends(database.get_db), current_user: mod
         "active_bookings": format_bookings(active_bookings),
         "past_bookings": format_bookings(past_bookings)
     }
+
 
 
 # ✅ Cancel User Booking (Active Only)
