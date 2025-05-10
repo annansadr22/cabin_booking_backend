@@ -10,7 +10,11 @@ router = APIRouter(
     tags=["Bookings"]
 )
 
-# User - Book a Cabin
+# ✅ Utility Function: Get IST Time (Directly Adding 5:30 Hours)
+def get_ist_time():
+    return datetime.utcnow() + timedelta(hours=5, minutes=30)
+
+# ✅ User - Book a Cabin
 @router.post("/")
 def book_cabin(booking: schemas.BookingCreate, db: Session = Depends(database.get_db), current_user: models.User = Depends(get_current_user)):
     # Check if cabin exists
@@ -18,8 +22,8 @@ def book_cabin(booking: schemas.BookingCreate, db: Session = Depends(database.ge
     if not cabin:
         raise HTTPException(status_code=404, detail="Cabin not found")
 
-    # Restrict to 7 days
-    if booking.slot_time.date() > (datetime.now() + timedelta(days=7)).date():
+    # Restrict to 7 days (Using IST)
+    if booking.slot_time.date() > (get_ist_time() + timedelta(days=7)).date():
         raise HTTPException(status_code=400, detail="You can only book for the next 7 days")
 
     # Check existing bookings for the same time slot
@@ -45,26 +49,6 @@ def book_cabin(booking: schemas.BookingCreate, db: Session = Depends(database.ge
     db.refresh(new_booking)
     return new_booking
 
-# User - List User Bookings (Active and Past)
-@router.get("/")
-def list_user_bookings(db: Session = Depends(database.get_db), current_user: models.User = Depends(get_current_user)):
-    active_bookings = db.query(models.Booking).filter(
-        models.Booking.user_id == current_user.id,
-        models.Booking.status == "Active",
-        models.Booking.slot_time >= datetime.now()
-    ).all()
-
-    past_bookings = db.query(models.Booking).filter(
-        models.Booking.user_id == current_user.id,
-        models.Booking.slot_time < datetime.now()
-    ).all()
-
-    return {
-        "active_bookings": active_bookings,
-        "past_bookings": past_bookings
-    }
-
-
 # ✅ List Available Slots for a Cabin (Today and Tomorrow - Only Future Slots)
 @router.get("/{cabin_id}/available-slots")
 def list_available_slots(cabin_id: int, db: Session = Depends(database.get_db)):
@@ -72,17 +56,18 @@ def list_available_slots(cabin_id: int, db: Session = Depends(database.get_db)):
     if not cabin:
         raise HTTPException(status_code=404, detail="Cabin not found")
 
-    # Get all active bookings for this cabin (Today and Tomorrow)
+    # Get all active bookings for this cabin
     active_bookings = db.query(models.Booking).filter(
         models.Booking.cabin_id == cabin_id,
-        models.Booking.status == "Active",
-        models.Booking.slot_time >= datetime.now(),
-        models.Booking.slot_time <= (datetime.now() + timedelta(days=1))
+        models.Booking.status == "Active"
     ).all()
-    
-    # Calculate available slots for today and tomorrow
+
+    # List of booked slots (datetime strings)
+    booked_slots = [booking.slot_time.strftime("%Y-%m-%d %H:%M") for booking in active_bookings]
+
+    # Calculate all possible slots for today and tomorrow
     available_slots = {}
-    now = datetime.now()  # Current time to avoid past time slots
+    now = get_ist_time()  # Use IST directly
     for day_offset in range(2):  # For today and tomorrow
         day = (now + timedelta(days=day_offset)).date()
         current_time = datetime.combine(day, cabin.start_time)
@@ -90,38 +75,32 @@ def list_available_slots(cabin_id: int, db: Session = Depends(database.get_db)):
         daily_slots = []
 
         while current_time < end_time:
-            # Skip past slots for today
-            if day == now.date() and current_time <= now:
-                current_time += timedelta(minutes=cabin.slot_duration)
-                continue
+            slot_str = current_time.strftime("%Y-%m-%d %H:%M")
 
-            # Check if the slot is already booked
-            slot_available = True
-            for booking in active_bookings:
-                if booking.slot_time == current_time:
-                    slot_available = False
-                    break
-            
-            if slot_available:
-                daily_slots.append(current_time.strftime("%Y-%m-%d %H:%M"))
+            # Determine if the slot is booked or in the past
+            if slot_str in booked_slots:
+                daily_slots.append(f"{slot_str} (Booked)")
+            elif current_time < now:
+                daily_slots.append(f"{slot_str} (Past)")
+            else:
+                daily_slots.append(slot_str)
 
             current_time += timedelta(minutes=cabin.slot_duration)
 
-        # Add the date to available slots even if empty
-        available_slots[day.strftime("%Y-%m-%d")] = daily_slots if daily_slots else []
+        available_slots[day.strftime("%Y-%m-%d")] = daily_slots
 
     return {
         "cabin_name": cabin.name,
-        "available_slots": available_slots
+        "available_slots": available_slots,
+        "booked_slots": booked_slots  # Separate list for booked slots
     }
-
 
 
 # ✅ Book a Selected Available Slot (Today and Tomorrow Only)
 @router.post("/{cabin_id}/book-selected-slot")
 def book_selected_slot(
     cabin_id: int, 
-    booking_data: dict,  # JSON payload for slot selection
+    booking_data: dict,  
     db: Session = Depends(database.get_db), 
     current_user: models.User = Depends(get_current_user)
 ):
@@ -135,34 +114,28 @@ def book_selected_slot(
     if not cabin:
         raise HTTPException(status_code=404, detail="Cabin not found")
 
-    # Convert selected_slot to datetime object
+    # Convert selected_slot to datetime object (IST)
     try:
-        slot_time = datetime.strptime(selected_slot, "%Y-%m-%d %H:%M")
+        slot_time = datetime.strptime(selected_slot, "%Y-%m-%d %H:%M") + timedelta(hours=5, minutes=30)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid slot time format. Use 'YYYY-MM-DD HH:MM'")
 
-    # Ensure the slot is within today and tomorrow
-    now = datetime.now()
-    if not (now.date() <= slot_time.date() <= (now + timedelta(days=1)).date()):
-        raise HTTPException(status_code=400, detail="You can only book slots for today or tomorrow")
+    # Check if slot is already booked
+    existing_booking = db.query(models.Booking).filter(
+        models.Booking.cabin_id == cabin_id,
+        models.Booking.slot_time == slot_time,
+        models.Booking.status == "Active"
+    ).first()
 
-    # Ensure slot is within the cabin's active hours
-    if slot_time.time() < cabin.start_time or slot_time.time() >= cabin.end_time:
-        raise HTTPException(status_code=400, detail="Slot time must be within cabin's active hours")
+    if existing_booking:
+        raise HTTPException(status_code=400, detail="Selected slot is already booked")
 
-    # Ensure slot is one of the available slots
-    available_slots = list_available_slots(cabin_id, db)["available_slots"]
-    selected_day = slot_time.strftime("%Y-%m-%d")
-
-    if selected_day not in available_slots or selected_slot not in available_slots[selected_day]:
-        raise HTTPException(status_code=400, detail="Selected slot is not available")
-
-    # Book the Selected Slot with Fixed Duration
+    # Book the Selected Slot
     new_booking = models.Booking(
         user_id=current_user.id,
         cabin_id=cabin_id,
         slot_time=slot_time,
-        duration=cabin.slot_duration,  # Automatically use cabin's fixed duration
+        duration=cabin.slot_duration,
         status="Active"
     )
     db.add(new_booking)
@@ -177,6 +150,7 @@ def book_selected_slot(
             "duration": cabin.slot_duration
         }
     }
+
 
 
 # ✅ List User Bookings (Active and Past with Cabin Names)
