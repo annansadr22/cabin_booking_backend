@@ -7,6 +7,9 @@ from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 from app import database, models
 from app.config import settings
+from email.message import EmailMessage
+import smtplib
+
 
 # Load Security Configurations
 SECRET_KEY = settings.JWT_SECRET_KEY
@@ -66,3 +69,29 @@ def verify_admin_user(current_user: models.User = Depends(get_current_user)):
             detail="You do not have permission to perform this action (Admin Only)."
         )
     return current_user
+
+
+def generate_reset_token(email: str) -> str:
+    expire = datetime.utcnow() + timedelta(minutes=15)
+    payload = {"sub": email, "exp": expire}
+    return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+
+def send_reset_email(to_email: str, reset_url: str):
+    msg = EmailMessage()
+    msg["Subject"] = "Reset Your Password"
+    msg["From"] = settings.SMTP_EMAIL
+    msg["To"] = to_email
+    msg.set_content(
+        f"Hi,\n\nClick this link to reset your password:\n{reset_url}\n\n"
+        f"This link will expire in 15 minutes.\n\n"
+        f"If you didn’t request it, you can ignore this email."
+    )
+
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587) as smtp:
+            smtp.starttls()
+            smtp.login(settings.SMTP_EMAIL, settings.SMTP_PASSWORD)
+            smtp.send_message(msg)
+        print(f"✅ Reset email sent to {to_email}")
+    except Exception as e:
+        print(f"❌ Failed to send reset email: {e}")

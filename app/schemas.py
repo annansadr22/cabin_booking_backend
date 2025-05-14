@@ -33,3 +33,9 @@ class BookingResponse(BaseModel):
     slot_time: datetime
     duration: int
     status: str
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    new_password: str
