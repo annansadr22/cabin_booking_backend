@@ -5,8 +5,10 @@ from datetime import time, datetime
 
 class UserCreate(BaseModel):
     username: str
+    employee_id: str
     email: EmailStr
     password: str
+    employee_id: str
 
 class UserLogin(BaseModel):
     email: EmailStr

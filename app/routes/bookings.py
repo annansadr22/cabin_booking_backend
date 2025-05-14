@@ -21,19 +21,26 @@ def list_available_slots(cabin_id: int, db: Session = Depends(database.get_db)):
     if not cabin:
         raise HTTPException(status_code=404, detail="Cabin not found")
 
-    # Get all active bookings for this cabin (UTC)
+    # ✅ Get all active bookings for this cabin with related user info
     active_bookings = db.query(models.Booking).filter(
         models.Booking.cabin_id == cabin_id,
         models.Booking.status == "Active"
     ).all()
 
-    # List of booked slots (datetime strings in UTC)
-    booked_slots = [booking.slot_time.strftime("%Y-%m-%d %H:%M") for booking in active_bookings]
+    # ✅ Build map: slot time (string) → user info
+    booked_slots_info = {}
+    for booking in active_bookings:
+        slot_key = booking.slot_time.strftime("%Y-%m-%d %H:%M")
+        booked_slots_info[slot_key] = {
+            "username": booking.user.username,
+            "employee_id": booking.user.employee_id
+        }
 
-    # Calculate all possible slots for today and tomorrow (IST for Display)
+    # ✅ Prepare display slot structure (Today & Tomorrow)
     available_slots = {}
-    now = get_ist_time()  # Current IST time (for display)
-    for day_offset in range(2):  # For today and tomorrow
+    now = get_ist_time()
+
+    for day_offset in range(2):  # today and tomorrow
         day = (now + timedelta(days=day_offset)).date()
         current_time = datetime.combine(day, cabin.start_time)
         end_time = datetime.combine(day, cabin.end_time)
@@ -42,8 +49,7 @@ def list_available_slots(cabin_id: int, db: Session = Depends(database.get_db)):
         while current_time < end_time:
             slot_str = current_time.strftime("%Y-%m-%d %H:%M")
 
-            # Determine if the slot is booked (in UTC)
-            if slot_str in booked_slots:
+            if slot_str in booked_slots_info:
                 daily_slots.append(f"{slot_str} (Booked)")
             elif current_time < now:
                 daily_slots.append(f"{slot_str} (Past)")
@@ -57,8 +63,9 @@ def list_available_slots(cabin_id: int, db: Session = Depends(database.get_db)):
     return {
         "cabin_name": cabin.name,
         "available_slots": available_slots,
-        "booked_slots": booked_slots  # Separate list for booked slots
+        "booked_slots_info": booked_slots_info  # ✅ new: contains user info
     }
+
 
 # ✅ Book a Selected Available Slot (in UTC)
 @router.post("/{cabin_id}/book-selected-slot")

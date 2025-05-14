@@ -7,11 +7,12 @@ import datetime
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
-    username = Column(String, unique=True, index=True)
+    username = Column(String, index=True)
     email = Column(String, unique=True, index=True)
     password = Column(String)  # <-- Changed to 'password' (Consistent with registration)
     is_admin = Column(Boolean, default=False)
     is_verified = Column(Boolean, default=False)
+    employee_id = Column(String, unique=True, index=True)
 
 class Cabin(Base):
     __tablename__ = "cabins"
@@ -31,3 +32,4 @@ class Booking(Base):
     slot_time = Column(DateTime)
     duration = Column(Integer)
     status = Column(String, default="Active")
+    user = relationship("User")  # ✅ Required for user info access

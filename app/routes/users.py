@@ -54,6 +54,7 @@ def register_user(user: schemas.UserCreate, db: Session = Depends(database.get_d
         username=user.username,
         email=user.email,
         password=hashed_password,
+        employee_id=user.employee_id,
         is_admin=False  # Normal User by Default
     )
     db.add(new_user)
@@ -118,7 +119,12 @@ def login_user(user: schemas.UserLogin, db: Session = Depends(database.get_db)):
         "sub": db_user.email,
         "is_admin": db_user.is_admin
     })
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "username": db_user.username,
+        "email": db_user.email
+    }
 
 # ✅ Admin Login (Secure and Detailed Error Handling)
 @router.post("/admin-login")
