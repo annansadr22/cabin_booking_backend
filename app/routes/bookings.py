@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from app import models, database, schemas, auth
 from app.dependencies import get_current_user
+from sqlalchemy import func
 
 router = APIRouter(
     prefix="/bookings",
@@ -68,30 +69,48 @@ def list_available_slots(cabin_id: int, db: Session = Depends(database.get_db)):
 
 
 # ✅ Book a Selected Available Slot (in UTC)
+from sqlalchemy import func
+
 @router.post("/{cabin_id}/book-selected-slot")
 def book_selected_slot(
-    cabin_id: int, 
-    booking_data: dict,  
-    db: Session = Depends(database.get_db), 
+    cabin_id: int,
+    booking_data: dict,
+    db: Session = Depends(database.get_db),
     current_user: models.User = Depends(get_current_user)
 ):
     selected_slot = booking_data.get("selected_slot")
-    
+
     if not selected_slot:
         raise HTTPException(status_code=400, detail="Selected slot is required")
 
-    # Validate Cabin
     cabin = db.query(models.Cabin).filter(models.Cabin.id == cabin_id).first()
     if not cabin:
         raise HTTPException(status_code=404, detail="Cabin not found")
 
-    # Convert selected_slot to UTC (remove IST handling)
     try:
-        slot_time = datetime.strptime(selected_slot, "%Y-%m-%d %H:%M")  # This is in UTC
+        slot_time = datetime.strptime(selected_slot, "%Y-%m-%d %H:%M")
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid slot time format. Use 'YYYY-MM-DD HH:MM'")
 
-    # Check if slot is already booked
+    # ✅ Check if user already has 2 bookings on the same day
+    slot_date = slot_time.date()
+    start_of_day = datetime.combine(slot_date, datetime.min.time())
+    end_of_day = datetime.combine(slot_date, datetime.max.time())
+
+    user_bookings_today = db.query(models.Booking).filter(
+        models.Booking.user_id == current_user.id,
+        models.Booking.status == "Active",
+        models.Booking.slot_time >= start_of_day,
+        models.Booking.slot_time <= end_of_day
+    ).count()
+
+    if user_bookings_today >= 2:
+        raise HTTPException(
+            status_code=403,
+            detail="Booking limit reached: You can only book 2 slots per day."
+        )
+
+    # ✅ Check if this specific slot is already booked
     existing_booking = db.query(models.Booking).filter(
         models.Booking.cabin_id == cabin_id,
         models.Booking.slot_time == slot_time,
@@ -101,11 +120,11 @@ def book_selected_slot(
     if existing_booking:
         raise HTTPException(status_code=400, detail="Selected slot is already booked")
 
-    # Book the Selected Slot
+    # ✅ Book it
     new_booking = models.Booking(
         user_id=current_user.id,
         cabin_id=cabin_id,
-        slot_time=slot_time,  # Storing in UTC
+        slot_time=slot_time,
         duration=cabin.slot_duration,
         status="Active"
     )
@@ -121,6 +140,7 @@ def book_selected_slot(
             "duration": cabin.slot_duration
         }
     }
+
 
 # ✅ List User Bookings (Active and Past with Cabin Names)
 @router.get("/my-bookings")
