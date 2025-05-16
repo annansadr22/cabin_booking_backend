@@ -3,6 +3,7 @@ from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, T
 from sqlalchemy.orm import relationship
 from app.database import Base
 import datetime
+from sqlalchemy.dialects.postgresql import ARRAY
 
 class User(Base):
     __tablename__ = "users"
@@ -23,6 +24,7 @@ class Cabin(Base):
     start_time = Column(Time, default=datetime.time(9, 0))
     end_time = Column(Time, default=datetime.time(19, 0))
     max_bookings_per_day = Column(Integer, default=1)
+    restricted_times = Column(ARRAY(String), default=[]) #New column for restricted timings
 
 class Booking(Base):
     __tablename__ = "bookings"

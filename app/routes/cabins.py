@@ -15,14 +15,15 @@ def create_cabin(cabin: schemas.CabinCreate, db: Session = Depends(database.get_
     existing_cabin = db.query(models.Cabin).filter(models.Cabin.name == cabin.name).first()
     if existing_cabin:
         raise HTTPException(status_code=400, detail="Cabin with this name already exists.")
-    
+
     new_cabin = models.Cabin(
         name=cabin.name,
         description=cabin.description,
         slot_duration=cabin.slot_duration,
         start_time=cabin.start_time,
         end_time=cabin.end_time,
-        max_bookings_per_day=cabin.max_bookings_per_day
+        max_bookings_per_day=cabin.max_bookings_per_day,
+        restricted_times=cabin.restricted_times  # ✅ Added this line
     )
     db.add(new_cabin)
     db.commit()
@@ -48,6 +49,8 @@ def update_cabin(cabin_id: int, cabin: schemas.CabinCreate, db: Session = Depend
     cabin_to_update.start_time = cabin.start_time or time(9, 0)
     cabin_to_update.end_time = cabin.end_time or time(19, 0)
     cabin_to_update.max_bookings_per_day = cabin.max_bookings_per_day
+    cabin_to_update.restricted_times = cabin.restricted_times  # ✅ Added this line
+
     db.commit()
     db.refresh(cabin_to_update)
     return {"message": "Cabin updated successfully", "cabin": cabin_to_update}
