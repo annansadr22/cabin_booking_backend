@@ -104,10 +104,10 @@ def book_selected_slot(
         models.Booking.slot_time <= end_of_day
     ).count()
 
-    if user_bookings_today >= 2:
+    if user_bookings_today >= 1:
         raise HTTPException(
             status_code=403,
-            detail="Booking limit reached: You can only book 2 slots per day."
+            detail="Booking limit reached: You can only book 1 slot per day."
         )
 
     # ✅ Check if this specific slot is already booked
