@@ -172,14 +172,19 @@ def admin_login(user: schemas.UserLogin, db: Session = Depends(database.get_db))
 def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
     email = payload.email
     user = db.query(models.User).filter(models.User.email == email).first()
+    
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
+    if not user.is_verified:
+        raise HTTPException(status_code=403, detail="Email not verified. Please register first.")
 
     token = auth.generate_reset_token(email)
     reset_url = f"{settings.FRONTEND_BASE_URL}/user/reset-password?token={token}"
     auth.send_reset_email(email, reset_url)
 
     return {"message": "Password reset link sent to your email"}
+
 
 
 @router.post("/reset-password")
